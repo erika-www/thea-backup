@@ -1,6 +1,6 @@
 /**
  * Bus Announcer Bridge Service (Personnel App / Pi 4B)
- * Communicates with the local Pi 4B bridge (pi4b_bridge.py / bridge.py) on port 5007 (or via /bridge dev proxy).
+ * Communicates with the local Pi 4B bridge (bridge.py) on port 5000 (or via /bridge dev proxy).
  *
  * Implemented strictly according to the "Pi 3B Interface for the Admin App (Pi 4B)" specification:
  * 1. Commands (4B -> 3B):
@@ -31,7 +31,9 @@ export function getBridgeBaseUrl() {
   const hostname = (typeof window !== 'undefined' && window.location && window.location.hostname)
     ? window.location.hostname
     : 'localhost';
-  return `http://${hostname}:5007`;
+  // The bridge runs on the same Pi 4B as the Firefox kiosk. Use loopback so
+  // the HTTPS Vercel app talks to the local HTTP bridge, never directly to Pi 3B.
+  return 'http://127.0.0.1:5000';
 }
 
 /**
@@ -233,21 +235,28 @@ export async function fetchLatestBridgeGps() {
       };
     }
 
-    const data = await response.json();
+    const envelope = await response.json();
+    // bridge.py returns { data: <Pi 3B UDP packet>, age_seconds }, while the
+    // in-repo pi4b_bridge.py returns the GPS fields at the top level.
+    const data = envelope?.data && typeof envelope.data === 'object'
+      ? { ...envelope.data, age_seconds: envelope.age_seconds }
+      : envelope;
+    const latitude = data.latitude ?? data.lat;
+    const longitude = data.longitude ?? data.lon;
+    const hasCoordinates = latitude != null && longitude != null
+      && Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+    const hasFreshPacket = data.age_seconds == null || Number(data.age_seconds) <= 5;
+    const hasFix = data.fix === false || data.valid === false ? false : (data.fix === true || hasCoordinates);
 
     // Rule 3: Treat data older than about 5 seconds as "GPS lost"
-    const isLost = Boolean(data.lost)
-      || !data.fix
-      || (typeof data.age_seconds === 'number' && data.age_seconds > 5.0)
-      || data.latitude == null
-      || data.longitude == null;
+    const isLost = Boolean(data.lost) || !hasFix || !hasFreshPacket || !hasCoordinates;
 
     if (!isLost) {
       return {
         fix: true,
         lost: false,
-        latitude: Number(data.latitude),
-        longitude: Number(data.longitude),
+        latitude: Number(latitude),
+        longitude: Number(longitude),
         timestamp: data.timestamp,
         speed: data.speed != null ? Number(data.speed) : null,
         heading: data.heading != null ? Number(data.heading) : null,

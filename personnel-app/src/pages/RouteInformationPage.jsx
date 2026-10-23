@@ -1252,22 +1252,18 @@ export function RouteInformationPage() {
     setIsTripActive(true);
     if (forceNewTrip) setTripCount((prev) => prev + 1);
 
-    // Send Start Trip command to Pi 3B if online
-    if (announcerInfo.online) {
-      const bridgeRes = await sendTripStart(direction, { force: forceNewTrip });
-      const displayedTrip = forceNewTrip ? tripCount + 1 : tripCount;
+    // Always attempt the bridge request. The status poll can be briefly stale,
+    // and the bridge itself returns the authoritative Pi 3B result.
+    const bridgeRes = await sendTripStart(direction, { force: forceNewTrip });
+    const displayedTrip = forceNewTrip ? tripCount + 1 : tripCount;
 
-      if (bridgeRes.ok || bridgeRes.success) {
-        setStatusMessage(`Trip #${displayedTrip} (${direction}) started at ${stopsList[0]?.name || 'Origin'}. G-703 GPS & Announcer active.`);
-      } else if (bridgeRes.conflict || bridgeRes.status === 409) {
-        setIsTripActive(true);
-        setStatusMessage(`Trip is already active on Pi 3B (${direction}) — continuing active trip.`);
-      } else {
-        setStatusMessage(`Trip started with G-703 GPS tracking. (Notice: ${bridgeRes.error || 'Bridge notice'})`);
-      }
+    if (bridgeRes.ok || bridgeRes.success) {
+      setStatusMessage(`Trip #${displayedTrip} (${direction}) started at ${stopsList[0]?.name || 'Origin'}. G-703 GPS & Announcer active.`);
+    } else if (bridgeRes.conflict || bridgeRes.status === 409) {
+      setIsTripActive(true);
+      setStatusMessage(`Trip is already active on Pi 3B (${direction}) — continuing active trip.`);
     } else {
-      const displayedTrip = forceNewTrip ? tripCount + 1 : tripCount;
-      setStatusMessage(`Trip #${displayedTrip} (${direction}) started at ${stopsList[0]?.name || 'Origin'}. G-703 GPS tracking active.`);
+      setStatusMessage(`Trip started locally. Pi 3B command failed: ${bridgeRes.error || 'Bridge unavailable'}`);
     }
 
     setTimeout(() => setStatusMessage(null), 6000);
@@ -1280,16 +1276,12 @@ export function RouteInformationPage() {
     setTripPhase('idle');
     setDistanceToHeading(null);
 
-    // Send HTTP POST /api/trip/end {} to Pi 3B if online
-    if (announcerInfo.online) {
-      const bridgeRes = await sendTripEnd();
-      if (bridgeRes.ok || bridgeRes.success) {
-        setStatusMessage('Trip ended. Announcer set to standby.');
-      } else {
-        setStatusMessage(`Trip ended. (${bridgeRes.error || 'Standby'})`);
-      }
+    // Send even if the latest status poll says offline; it may be stale.
+    const bridgeRes = await sendTripEnd();
+    if (bridgeRes.ok || bridgeRes.success) {
+      setStatusMessage('Trip ended. Announcer set to standby.');
     } else {
-      setStatusMessage('Trip ended. System set to standby.');
+      setStatusMessage(`Trip ended locally. Pi 3B command failed: ${bridgeRes.error || 'Bridge unavailable'}`);
     }
 
     // Prompt to alight any remaining onboard passengers
